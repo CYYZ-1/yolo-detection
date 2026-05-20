@@ -1730,7 +1730,104 @@ class YoloVideoPro(QMainWindow):
                 desc = ev[6] or ""
                 person_count = ev[3] or 0
                 if alarm_type == 'zone_intrusion':
- 
+                    self.alarm_log.append(f"[{ts}] ⚠ 警报: 警戒区域入侵 (人数: {person_count})")
+                elif alarm_type == 'crowding':
+                    self.alarm_log.append(f"[{ts}] ⚠ 人群聚集: {desc}")
+                else:
+                    self.alarm_log.append(f"[{ts}] ⚠ {alarm_type}: {desc}")
+        except Exception:
+            pass
+
+    def clear_alarm_log(self):
+        self.alarm_log.clear()
+        # 同时清除数据库中的报警记录
+        try:
+            conn = sqlite3.connect(self.db.db_path)
+            conn.execute("DELETE FROM alarm_events")
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def clear_alarm_zone(self):
+        self.alarm_zone = None
+        self.roi_start_point = None
+        self.roi_end_point = None
+        self._alarm_was_active = False
+        QMessageBox.information(self, "成功", "警戒区域已清除")
+
+    # ----------------------------------------------------------
+    # 轨迹分析
+    # ----------------------------------------------------------
+    def update_trajectory_analysis(self):
+        trajs = self.trajectory.get_all_trajectories()
+        if trajs:
+            self.trajectory_widget.plot_trajectories(trajs)
+            self.lbl_total_tracks.setText(f"总轨迹数: {len(trajs)}")
+            total_dist = 0; cnt = 0
+            for pts in trajs.values():
+                if len(pts) < 2: continue
+                for i in range(1, len(pts)):
+                    total_dist += np.sqrt((pts[i][0] - pts[i - 1][0]) ** 2 +
+                                          (pts[i][1] - pts[i - 1][1]) ** 2)
+                    cnt += 1
+            avg_d = total_dist / cnt if cnt > 0 else 0
+            self.lbl_avg_distance.setText(f"平均移动距离: {avg_d:.1f} px")
+
+    # ----------------------------------------------------------
+    # 行为分析
+    # ----------------------------------------------------------
+    def update_behavior_analysis(self):
+        self._update_behavior_chart({'stationary': 0, 'walking': 0, 'running': 0})
+
+    def _update_behavior_chart(self, counts):
+        labels = ['静止', '行走', '奔跑']
+        vals = [counts.get('stationary', 0), counts.get('walking', 0), counts.get('running', 0)]
+        self.lbl_stationary.setText(f"🟤 静止: {vals[0]}")
+        self.lbl_walking.setText(f"🟡 行走: {vals[1]}")
+        self.lbl_running.setText(f"🔴 奔跑: {vals[2]}")
+        if sum(vals) > 0:
+            self.behavior_chart_widget.plot_pie_chart(labels, vals, title="行为分布")
+
+    # ----------------------------------------------------------
+    # 统计刷新
+    # ----------------------------------------------------------
+    def refresh_statistics(self):
+        stats = self.db.get_statistics()
+        self.lbl_total_detections.setText(f"总检测次数: {stats['total_detections']}")
+        self.lbl_total_alarms.setText(f"总报警次数: {stats['total_alarms']}")
+        self.lbl_avg_persons.setText(f"平均行人数量: {stats['avg_persons']}")
+        self.lbl_avg_fps.setText(f"平均 FPS: {stats['avg_fps']}")
+
+    def refresh_dashboard(self):
+        stats = self.db.get_statistics()
+        self.lbl_dashboard_total.setText(f"🔵 总检测次数: {stats['total_detections']}")
+        self.lbl_dashboard_alarms.setText(f"🔴 总报警次数: {stats['total_alarms']}")
+        self.lbl_dashboard_avg_persons.setText(f"🟢 平均行人数量: {stats['avg_persons']}")
+        self.lbl_dashboard_avg_fps.setText(f"🟡 平均 FPS: {stats['avg_fps']}")
+        trajs = self.trajectory.get_all_trajectories()
+        self.lbl_dashboard_tracks.setText(f"📍 总轨迹数: {len(trajs)}")
+
+    def query_history(self):
+        sd = self.date_start.date().toString("yyyy-MM-dd")
+        ed = self.date_end.date().toString("yyyy-MM-dd")
+        records = self.db.get_detection_records(sd, ed)
+        self.history_table.setRowCount(0)
+        for i, rec in enumerate(records):
+            self.history_table.insertRow(i)
+            # 数据库字段: id, timestamp, source_type, source_path, model_name,
+            #             confidence_threshold, tracking_enabled, total_persons, fps, processing_time
+            display_indices = [1, 2, 4, 7, 8, 9]  # 时间, 类型, 模型, 行人, FPS, 耗时
+            for j, idx in enumerate(display_indices):
+                val = rec[idx]
+                if idx == 9:  # processing_time - 格式化为毫秒
+                    val = f"{float(val):.1f} ms"
+                elif idx == 8:  # fps
+                    val = f"{float(val):.1f}"
+                item = QTableWidgetItem(str(val))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.history_table.setItem(i, j, item)
+
 
 # ============================================================
 # 启动入口
